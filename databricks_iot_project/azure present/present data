@@ -1,0 +1,68 @@
+def create_presentation_tables(
+    processed_data_path: str,
+    presentation_db: str,
+    presentation_path: str,
+    base_table: str = "base_aggregated",
+    weekly_table: str = "weekly_trends",
+    extremes_table: str = "daily_extremes"
+):
+    # Load the processed Delta data
+    loading_df = spark.read.format("delta").load(processed_data_path)
+    display(loading_df)
+
+    # Register temp view for SQL usage
+    loading_df.createOrReplaceTempView("iot_aggregated_raw")
+
+    # Create the presentation database
+    spark.sql(f"""
+        CREATE DATABASE IF NOT EXISTS {presentation_db}
+        LOCATION '{presentation_path}'
+    """)
+
+    # Base aggregated table
+    spark.sql(f"""
+        CREATE OR REPLACE TABLE {presentation_db}.{base_table}
+        USING DELTA AS
+        SELECT 
+            date,
+            time,
+            humidity,
+            temperature
+        FROM iot_aggregated_raw
+    """)
+
+    # Weekly trends
+    spark.sql(f"""
+        CREATE OR REPLACE TABLE {presentation_db}.{weekly_table}
+        USING DELTA AS
+        SELECT 
+            date,
+            AVG(humidity) AS avg_humidity,
+            AVG(temperature) AS avg_temperature
+        FROM iot_aggregated_raw
+        WHERE date >= date_sub(current_date(), 7)
+        GROUP BY date
+    """)
+
+    # Daily extremes
+    spark.sql(f"""
+        CREATE OR REPLACE TABLE {presentation_db}.{extremes_table}
+        USING DELTA AS
+        SELECT 
+            date,
+            MAX(temperature) AS max_temperature,
+            MIN(temperature) AS min_temperature,
+            MAX(humidity) AS max_humidity,
+            MIN(humidity) AS min_humidity
+        FROM iot_aggregated_raw
+        GROUP BY date
+    """)
+
+    print(f"Presentation tables created in database '{presentation_db}'")
+
+# Example usage
+create_presentation_tables(
+    processed_data_path="/mnt/landinglakeiot/processed/iot_sensor_processed",
+    presentation_db="iot_presentation",
+    presentation_path="/mnt/landinglakeiot/presentation/"
+)

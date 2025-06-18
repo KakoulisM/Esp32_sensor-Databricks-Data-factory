@@ -1,0 +1,33 @@
+from pyspark.sql.functions import from_json, explode, col
+from pyspark.sql.types import ArrayType, StructType, StructField, StringType, DoubleType
+
+def process_iot_sensor_json(input_path: str, output_path: str):
+    # Define the schema
+    entry_schema = StructType([
+        StructField("timestamp", StringType(), True),
+        StructField("humidity", DoubleType(), True),
+        StructField("temperature_c", DoubleType(), True)
+    ])
+    array_schema = ArrayType(entry_schema)
+
+    # Read files as RDD and convert to DataFrame
+    files_rdd = sc.wholeTextFiles(input_path)
+    files_df = files_rdd.toDF(["filename", "json_content"])
+
+    # Parse and explode JSON
+    parsed_df = files_df.select(
+        explode(from_json(col("json_content"), array_schema)).alias("record")
+    ).select("record.*")
+
+    # Write to output path
+    parsed_df.write.mode("overwrite").save(output_path)
+    print(f"Parsed data written to {output_path}")
+
+    return parsed_df
+
+# Example usage — safe to keep in a separate config file or notebook
+input_path = "/mnt/landinglakeiot/demo/raw/*.json"
+output_path = "/mnt/landinglakeiot/raw/iot_sensor_parsed"
+
+df_result = process_iot_sensor_json(input_path, output_path)
+display(df_result)

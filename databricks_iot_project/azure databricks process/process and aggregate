@@ -1,0 +1,46 @@
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import (
+    to_timestamp, date_format, avg,
+    unix_timestamp, from_unixtime, floor,
+    col, round as pyspark_round
+)
+
+def transform_iot_sensor_data(input_path: str, output_path: str) -> DataFrame:
+    # Load raw parsed data
+    processing_df = spark.read.format("delta").load(input_path)
+
+    # Parse timestamp and generate 30-minute buckets
+    transformation_df = processing_df.withColumn(
+        "parsed_timestamp",
+        to_timestamp("timestamp", "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'")
+    )
+
+    intervals_df = transformation_df.withColumn(
+        "bucket_30min",
+        from_unixtime(floor(unix_timestamp("parsed_timestamp") / 1800) * 1800)
+    )
+
+    # Compute average humidity and temperature per 30-minute bucket
+    average_df = intervals_df.groupBy("bucket_30min").agg(
+        pyspark_round(avg("humidity"), 2).alias("humidity"),
+        pyspark_round(avg("temperature_c"), 2).alias("temperature")
+    )
+
+    # Add readable date/time columns and select final output
+    final_df = average_df.withColumn("date", date_format("bucket_30min", "yyyy-MM-dd")) \
+                         .withColumn("time", date_format("bucket_30min", "HH:mm")) \
+                         .select("time", "date", "humidity", "temperature") \
+                         .orderBy("date", "time")
+
+    # Save output in Delta format
+    final_df.write.mode("overwrite").format("delta").save(output_path)
+    print(f"Transformed data saved to {output_path}")
+
+    return final_df
+
+# Example usage — keep this in a separate cell or config-controlled script
+input_path = "/mnt/landinglakeiot/raw/iot_sensor_parsed/"
+output_path = "/mnt/landinglakeiot/processed/iot_sensor_processed/"
+
+df_result = transform_iot_sensor_data(input_path, output_path)
+display(df_result)
